@@ -1,0 +1,421 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "NLP based PhotoAlbum Web Application"
+Parameters:
+    S3Name1:
+        Type: "String"
+        Default: "photoalbum-a2-cf"
+    S3Name2:
+        Type: "String"
+        Default: "photoalbum-audiosearch-a2-cf"
+    S3Name3:
+        Type: "String"
+        Default: "photoalbum-audiototext-a2-cf"
+    S3Name4:
+        Type: "String"
+        Default: "photoalbum-frontend-a2-cf"
+    Lambda1Name:
+        Type: "String"
+        Default: "search-photos-cf"
+    Lambda2Name:
+        Type: "String"
+        Default: "index-photos-cf"
+    InflectLayerName:
+        Type: "String"
+        Default: "inflect-cf"
+    LexBotName:
+        Type: "String"
+        Default: "searchalbumbot-cf"
+    LexBotAlias:
+        Type: "String"
+        Default: "searchalbumbot-cf-v1"
+    GitHubOwner:
+        Type: String
+        Default: vishalprakash97
+        AllowedPattern: '[A-Za-z0-9-]+'
+    GitHubRepo:
+        Type: String
+        Default: photoalbum-frontend
+        AllowedPattern: '[A-Za-z0-9-]+'
+    GitHubBranch:
+        Type: String
+        Default: master
+        AllowedPattern: '[A-Za-z0-9-]+'
+    GitHubOAuthToken:
+        Type: String
+        Default: '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'
+        NoEcho: true
+        
+Resources:
+    S3Bucket1:
+        Type: "AWS::S3::Bucket"
+        Properties:
+            BucketName: !Ref S3Name1
+            AccessControl: "PublicReadWrite"
+
+    S3Bucket2:
+        Type: "AWS::S3::Bucket"
+        Properties:
+            BucketName: !Ref S3Name2
+            AccessControl: "PublicReadWrite"
+    S3Bucket3:
+        Type: "AWS::S3::Bucket"
+        Properties:
+            BucketName: !Ref S3Name3
+            AccessControl: "PublicReadWrite"
+    S3Bucket4:
+        Type: "AWS::S3::Bucket"
+        Properties:
+            BucketName: !Ref S3Name4
+            WebsiteConfiguration: 
+                IndexDocument: "index.html"
+            AccessControl: "PublicReadWrite"
+    Lambda1:
+        Type: "AWS::Lambda::Function"
+        Properties:
+            Description: ""
+            FunctionName: !Ref Lambda1Name
+            Handler: "searchphotos.lambda_handler"
+            Architectures: 
+              - "x86_64"
+            Code: 
+                S3Bucket: "searchphotoslambda"
+                S3Key: "searchphotos.zip"
+            MemorySize: 128
+            Role: !GetAtt IAMRoleSearchPhotos.Arn
+            Runtime: "python3.9"
+            Timeout: 60
+            TracingConfig: 
+                Mode: "PassThrough"
+            Layers: 
+              - !Sub "arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python39:1"
+              - !Ref InflectLayer
+              #- !Sub "arn:aws:lambda:us-east-1:019281413155:layer:inflect:10"
+            EphemeralStorage: 
+                Size: 512
+    Lambda2:
+        Type: "AWS::Lambda::Function"
+        Properties:
+            Description: ""
+            FunctionName: !Ref Lambda2Name
+            Handler: "indexphotos.lambda_handler"
+            Architectures: 
+              - "x86_64"
+            Code: 
+                S3Bucket: "indexphotoslambda"
+                S3Key: "indexphotos.zip"
+            MemorySize: 128
+            Role: !GetAtt IAMRoleIndexPhotos.Arn
+            Runtime: "python3.9"
+            Timeout: 30
+            TracingConfig: 
+                Mode: "PassThrough"
+            Layers: 
+              - !Sub "arn:aws:lambda:${AWS::Region}:336392948345:layer:AWSSDKPandas-Python39:1"
+            EphemeralStorage: 
+                Size: 512
+                
+    InflectLayer:
+        Type: AWS::Lambda::LayerVersion
+        Properties:
+          CompatibleArchitectures:
+            - arm64
+            - x86_64
+          CompatibleRuntimes:
+            - python3.9
+          Content:
+            S3Bucket: "inflectlayer-bucket"
+            S3Key: "lambda-layers.zip"
+          LayerName: !Ref InflectLayerName
+          
+    SearchBotTemplate:
+        DependsOn: BotRuntimeRole
+        Type: AWS::Lex::Bot
+        Properties:
+            Name: !Ref LexBotName
+            RoleArn: !GetAtt BotRuntimeRole.Arn
+            DataPrivacy:
+                ChildDirected: false
+            IdleSessionTTLInSeconds: 300
+            Description: "Cloud Assignment 2 Album Search Bot"
+            AutoBuildBotLocales: false
+            BotLocales:
+              - LocaleId: "en_US"
+                Description: "Search photos Locale"
+                NluConfidenceThreshold: 0.40
+                VoiceSettings:
+                    VoiceId: "Ivy"
+                Intents:
+                  - Name: "searchalbumintent-cf"
+                    Description: "Intent to collect search keywords from user"
+                    SampleUtterances:
+                      - Utterance: "show me a {SearchOne} and a {SearchTwo}"
+                      - Utterance: "Show me a {SearchOne}"
+                      - Utterance: "Show me {SearchOne} and {SearchTwo}"
+                      - Utterance: "Show me {SearchOne}"
+                      - Utterance: "Search {SearchOne}"
+                      - Utterance: "Search {SearchOne} and {SearchTwo}"
+                      - Utterance: "Give me {SearchOne} and {SearchTwo}"
+                      - Utterance: "Give me {SearchOne}"
+                    IntentConfirmationSetting:
+                        PromptSpecification:
+                            MessageGroupsList:
+                              - Message:
+                                    PlainTextMessage:
+                                        Value: "Searching"
+                            MaxRetries: 3
+                            AllowInterrupt: false
+                        DeclinationResponse:
+                            MessageGroupsList:
+                              - Message:
+                                    PlainTextMessage:
+                                        Value: "Search cancelled"
+                            AllowInterrupt: false
+                    SlotPriorities:
+                      - Priority: 1
+                        SlotName: SearchOne
+                      - Priority: 2
+                        SlotName: SearchTwo
+                    Slots:
+                      - Name: "SearchOne"
+                        Description: "First Search Keyword"
+                        SlotTypeName: "AMAZON.AlphaNumeric"
+                        ValueElicitationSetting:
+                            SlotConstraint: "Required"
+                      - Name: "SearchTwo"
+                        Description: "Second Search Keyword"
+                        SlotTypeName: "AMAZON.AlphaNumeric"
+                        ValueElicitationSetting:
+                            SlotConstraint: "Optional"
+                  - Name: "FallbackIntent"
+                    Description: "Default intent when no other intent matches"
+                    ParentIntentSignature: "AMAZON.FallbackIntent"
+                    
+    OpenSearchServiceDomain:
+        Type: AWS::OpenSearchService::Domain
+        Properties:
+            DomainName: 'photos-cf'
+            EngineVersion: 'Elasticsearch_7.10'
+            AdvancedSecurityOptions:
+                Enabled: true
+                InternalUserDatabaseEnabled: true
+                MasterUserOptions:
+                        #MasterUserARN: String
+                        MasterUserName: "master1"
+                        MasterUserPassword: "Cloud.12"
+            NodeToNodeEncryptionOptions:
+                Enabled: true
+            EncryptionAtRestOptions:
+                Enabled: true
+                KmsKeyId: 'arn:aws:kms:us-east-1:019281413155:key/eed1fc82-3213-4369-8ad6-5e5f6c7b1c84'
+            DomainEndpointOptions:
+                EnforceHTTPS: true
+            SnapshotOptions:
+                  AutomatedSnapshotStartHour: 0
+            ClusterConfig:
+                InstanceCount: '1'
+                InstanceType: 't3.small.search'
+                #DedicatedMasterType: 'm3.medium.search'
+                #DedicatedMasterCount: '3'
+            EBSOptions:
+                EBSEnabled: true
+                Iops: '3000'
+                VolumeSize: '10'
+                VolumeType: 'gp3'
+            AccessPolicies:
+                Version: '2012-10-17'
+                Statement:
+                  -
+                    Effect: 'Allow'
+                    Principal:
+                        AWS: '*'
+                    Action: 'es:*'
+                    Resource: 'arn:aws:es:us-east-1:019281413155:domain/photos/*'
+        
+    SearchBotVersion:
+        DependsOn: SearchBotTemplate
+        Type: AWS::Lex::BotVersion
+        Properties:
+            BotId: !Ref SearchBotTemplate
+            BotVersionLocaleSpecification:
+              - LocaleId: en_US
+                BotVersionLocaleDetails:
+                    SourceBotVersion: DRAFT
+            Description: "Bot Version"
+    SearchBotAlias:
+        DependsOn: SearchBotVersion
+        Type: AWS::Lex::BotAlias
+        Properties:
+            BotId: !Ref SearchBotTemplate
+            BotAliasName: !Ref LexBotAlias
+            BotVersion: !GetAtt SearchBotVersion.BotVersion
+            SentimentAnalysisSettings:
+                DetectSentiment: true
+                
+    IAMRoleSearchPhotos:
+        Type: "AWS::IAM::Role"
+        Properties:
+            Path: "/service-role/"
+            RoleName: "search-photos-role-cf"
+            AssumeRolePolicyDocument: "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}"
+            MaxSessionDuration: 3600
+            ManagedPolicyArns: 
+              - !Sub "arn:aws:iam::${AWS::AccountId}:policy/service-role/AWSLambdaBasicExecutionRole-46fafe24-d756-4e17-b585-7598d29958a1"
+              - "arn:aws:iam::aws:policy/AmazonTranscribeFullAccess"
+              - "arn:aws:iam::aws:policy/AmazonLexFullAccess"
+              - "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+              - "arn:aws:iam::aws:policy/AmazonOpenSearchServiceFullAccess"
+    IAMRoleIndexPhotos:
+        Type: "AWS::IAM::Role"
+        Properties:
+            Path: "/service-role/"
+            RoleName: "index-photos-role-cf"
+            AssumeRolePolicyDocument: "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"lambda.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}"
+            MaxSessionDuration: 3600
+            ManagedPolicyArns: 
+              - !Sub "arn:aws:iam::${AWS::AccountId}:policy/service-role/AWSLambdaBasicExecutionRole-c1e3eb98-aca3-4c48-9a92-aa0848e66fc3"
+              - "arn:aws:iam::aws:policy/AmazonRekognitionFullAccess"
+              - "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+              - "arn:aws:iam::aws:policy/AmazonOpenSearchServiceFullAccess"
+    BotRuntimeRole:
+        Type: AWS::IAM::Role
+        Properties:
+            AssumeRolePolicyDocument:
+                Version: "2012-10-17"
+                Statement:
+                  - Effect: Allow
+                    Principal:
+                      Service:
+                        - lex.amazonaws.com
+                    Action:
+                      - "sts:AssumeRole"
+            Path: "/"
+            Policies:
+                  - PolicyName: LexRuntimeRolePolicy
+                    PolicyDocument:
+                        Version: 2012-10-17
+                        Statement:
+                          - Effect: Allow
+                            Action:
+                              - "polly:SynthesizeSpeech"
+                              - "comprehend:DetectSentiment"
+                            Resource: "*"
+    S3BucketPolicy4:
+        Type: AWS::S3::BucketPolicy
+        Properties:
+            Bucket: !Ref S3Name4
+            PolicyDocument:
+                Version: 2012-10-17
+                Statement:
+                  - Action:
+                      - 's3:GetObject'
+                    Effect: Allow
+                    Resource: !Join
+                        - ''
+                        - - 'arn:aws:s3:::'
+                          - !Ref S3Name4
+                          - /*
+                    Principal: '*'
+    S3BucketPolicy1:
+        Type: AWS::S3::BucketPolicy
+        Properties:
+            Bucket: !Ref S3Name1
+            PolicyDocument:
+                Version: 2012-10-17
+                Statement:
+                  - Action:
+                      - 's3:GetObject'
+                    Effect: Allow
+                    Resource: !Join
+                        - ''
+                        - - 'arn:aws:s3:::'
+                          - !Ref S3Name1
+                          - /*
+                    Principal: '*'
+    S3BucketPolicy2:
+        Type: AWS::S3::BucketPolicy
+        Properties:
+            Bucket: !Ref S3Name2
+            PolicyDocument:
+                Version: 2012-10-17
+                Statement:
+                  - Action:
+                      - 's3:GetObject'
+                    Effect: Allow
+                    Resource: !Join
+                        - ''
+                        - - 'arn:aws:s3:::'
+                          - !Ref S3Name2
+                          - /*
+                    Principal: '*'
+    S3BucketPolicy3:
+        Type: AWS::S3::BucketPolicy
+        Properties:
+            Bucket: !Ref S3Name3
+            PolicyDocument:
+                Version: 2012-10-17
+                Statement:
+                  - Action:
+                      - 's3:GetObject'
+                    Effect: Allow
+                    Resource: !Join
+                        - ''
+                        - - 'arn:aws:s3:::'
+                          - !Ref S3Name3
+                          - /*
+                    Principal: '*'
+                    
+    CodePipelineFrontEndRole:
+        Type: "AWS::IAM::Role"
+        Properties:
+            Path: "/service-role/"
+            RoleName: "CodePipelineFrontEndRole-cf"
+            AssumeRolePolicyDocument: "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Service\":\"codepipeline.amazonaws.com\"},\"Action\":\"sts:AssumeRole\"}]}"
+            MaxSessionDuration: 3600
+            ManagedPolicyArns: 
+              - !Sub "arn:aws:iam::${AWS::AccountId}:policy/service-role/AWSCodePipelineServiceRole-us-east-1-front-end-pipeline"
+    
+    CodePipelineFrontEnd:
+        Type: "AWS::CodePipeline::Pipeline"
+        Properties:
+            Name: "CodePipelineFrontEnd-cf"
+            RoleArn: !GetAtt CodePipelineFrontEndRole.Arn
+            ArtifactStore: 
+                Location: !Sub "codepipeline-${AWS::Region}-511494083853"
+                Type: "S3"
+            Stages: 
+              - Name: "Source"
+                Actions: 
+                  - Name: "Source"
+                    ActionTypeId: 
+                        Category: "Source"
+                        Owner: "AWS"
+                        Provider: "CodeCommit"
+                        Version: "1"
+                    Configuration: 
+                        {
+                        'Owner': !Ref GitHubOwner,
+                        'Repo': !Ref GitHubRepo,
+                        'Branch': !Ref GitHubBranch,
+                        'OAuthToken': !Ref GitHubOAuthToken
+                        }
+                    OutputArtifacts: 
+                      - Name: "SourceArtifact"
+                    Region: !Ref AWS::Region
+                    Namespace: "SourceVariables"
+                    RunOrder: 1
+              - Name: "Deploy"
+                Actions: 
+                  - Name: "Deploy"
+                    ActionTypeId: 
+                        Category: "Deploy"
+                        Owner: "AWS"
+                        Provider: "S3"
+                        Version: "1"
+                    Configuration: 
+                        BucketName: !Ref S3Bucket4
+                        Extract: "true"
+                    InputArtifacts: 
+                      - Name: "SourceArtifact"
+                    Region: !Ref AWS::Region
+                    Namespace: "DeployVariables"
+                    RunOrder: 1
