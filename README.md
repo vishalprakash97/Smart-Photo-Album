@@ -1,8 +1,12 @@
 # Smart-Photo-Album
 
-## Contributors
+#### Description
+AI photo album which can be searched using voice and text
+
+#### Architecture
+<img src="Images/architecture.png" width=400>
+
+#### Contributors
 
 * Vishal Prakash (vp2181@nyu.edu)
 * Vedang Mondreti (vm2129@nyu.edu)
-
-URL: http://photoalbum-frontend-a2.s3-website-us-east-1.amazonaws.com
